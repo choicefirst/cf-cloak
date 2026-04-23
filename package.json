@@ -1,0 +1,22 @@
+{
+  "name": "cf-cloak",
+  "version": "0.1.0",
+  "description": "ChoiceFirst open-source blocking engine — DNS matching and domain blocklist logic",
+  "license": "AGPL-3.0-only",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test dist/index.test.js"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.3"
+  }
+}
