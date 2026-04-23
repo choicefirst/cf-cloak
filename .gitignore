@@ -1,0 +1,23 @@
+# npm
+node_modules/
+package-lock.json
+
+# TypeScript build output
+dist/
+*.tsbuildinfo
+
+# Android build artifacts
+android/build/
+android/.gradle/
+android/local.properties
+*.aar
+*.apk
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
