@@ -59,6 +59,7 @@ class VpnPlugin : Plugin() {
         val supabaseAnon = call.getString("supabase_anon_key") ?: ""
         val authToken = call.getString("auth_token") ?: ""
         val logEvents = call.getBoolean("log_events", true) ?: true
+        val sniInspect = call.getBoolean("sni_inspect", false) ?: false
 
         val intent = Intent(context, CfVpnService::class.java).apply {
             action = CfVpnService.ACTION_START
@@ -68,6 +69,7 @@ class VpnPlugin : Plugin() {
             putExtra(CfVpnService.EXTRA_SUPABASE_ANON, supabaseAnon)
             putExtra(CfVpnService.EXTRA_AUTH_TOKEN, authToken)
             putExtra(CfVpnService.EXTRA_LOG_EVENTS, logEvents)
+            putExtra(CfVpnService.EXTRA_SNI_INSPECT, sniInspect)
         }
         ContextCompat.startForegroundService(context, intent)
 
@@ -90,6 +92,7 @@ class VpnPlugin : Plugin() {
             put("domain_count", CfVpnService.domainCount())
             put("blocked_session", CfVpnService.blockedInSession())
             put("version", CfVpnService.currentVersion())
+            put("sni_inspect", CfVpnService.isSniActive())
         })
     }
 }

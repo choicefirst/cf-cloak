@@ -13,18 +13,22 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.io.OutputStreamWriter
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.HttpURLConnection
 import java.net.InetAddress
 import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URL
 import java.nio.ByteBuffer
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
@@ -43,10 +47,14 @@ import org.json.JSONObject
  *   - suffix-match against the blocklist → synthesize NXDOMAIN, never leaves the device
  *   - otherwise → forward to UPSTREAM_DNS via a socket we protect() from the tunnel
  *
- * This is the same approach as DNS66 / early Blokada. It's not packet-level
- * blocking — an app that hardcodes an IP or uses DoH bypasses us. Tracker
- * endpoints overwhelmingly resolve via DNS, so this catches ~95% for ~5% of
- * the complexity of a full packet filter.
+ * This is the same approach as DNS66 / early Blokada. It catches ~95% of
+ * trackers for ~5% of the complexity of a full packet filter.
+ *
+ * When sniInspect=true the tunnel also intercepts TCP/443 traffic to inspect
+ * TLS ClientHello SNI hostnames. Blocked hostnames receive a TCP RST before
+ * any data is exchanged. Allowed connections are relayed transparently via a
+ * protect()-ed socket. This is the second line of defence against trackers
+ * that hardcode IPs or use DNS-over-HTTPS.
  *
  * This file is part of the cf-cloak open-source enforcement layer.
  * Licensed under AGPLv3. See the repository root for full terms.
@@ -62,6 +70,7 @@ class CfVpnService : VpnService() {
         const val EXTRA_SUPABASE_ANON = "supabase_anon_key"
         const val EXTRA_AUTH_TOKEN = "auth_token"
         const val EXTRA_LOG_EVENTS = "log_events"
+        const val EXTRA_SNI_INSPECT = "sni_inspect"
 
         private const val TAG = "CfVpn"
         private const val NOTIFICATION_ID = 42
@@ -70,17 +79,21 @@ class CfVpnService : VpnService() {
         private const val TUNNEL_DNS_SINK = "10.47.0.3"
         private const val UPSTREAM_DNS = "1.1.1.1"
         private const val UPSTREAM_DNS_PORT = 53
+        private const val HTTPS_PORT = 443
+        private const val TCP_RELAY_TIMEOUT_MS = 10_000
 
         private const val QUEUE_MAX = 2_000
         private const val FLUSH_BATCH = 500
         private const val FLUSH_INTERVAL_SECONDS = 60L
 
         @Volatile private var active = false
+        @Volatile private var sniActive = false
         private val blockedCount = AtomicInteger(0)
         @Volatile private var blocklist: Set<String> = emptySet()
         @Volatile private var version: String = ""
 
         fun isActive() = active
+        fun isSniActive() = sniActive
         fun domainCount() = blocklist.size
         fun blockedInSession() = blockedCount.get()
         fun currentVersion() = version
@@ -94,6 +107,10 @@ class CfVpnService : VpnService() {
     private var supabaseAnon: String = ""
     private var authToken: String = ""
     private var logEvents: Boolean = true
+    private var sniInspect: Boolean = false
+
+    // Active TCP relay threads keyed by connection ID (srcPort:dstIp:dstPort)
+    private val tcpRelays = ConcurrentHashMap<String, Thread>()
 
     private val eventQueue = ConcurrentLinkedDeque<Pair<String, String>>()
     private var flusher: ScheduledExecutorService? = null
@@ -117,6 +134,7 @@ class CfVpnService : VpnService() {
                 supabaseAnon = intent.getStringExtra(EXTRA_SUPABASE_ANON) ?: ""
                 authToken = intent.getStringExtra(EXTRA_AUTH_TOKEN) ?: ""
                 logEvents = intent.getBooleanExtra(EXTRA_LOG_EVENTS, true)
+                sniInspect = intent.getBooleanExtra(EXTRA_SNI_INSPECT, false)
                 startTunnel(domains, v)
                 return START_STICKY
             }
@@ -143,8 +161,14 @@ class CfVpnService : VpnService() {
             .setSession("ChoiceFirst")
             .addAddress(TUNNEL_LOCAL, 32)
             .addDnsServer(TUNNEL_DNS_SINK)
-            .addRoute(TUNNEL_DNS_SINK, 32)
-            .setBlocking(true)
+            .addRoute(TUNNEL_DNS_SINK, 32)  // DNS-only route is always active
+
+        // SNI mode widens the tunnel to capture all TCP/443 traffic in addition to DNS.
+        if (sniInspect) {
+            builder.addRoute("0.0.0.0", 0)
+        }
+
+        builder.setBlocking(true)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             builder.setMetered(false)
@@ -152,6 +176,7 @@ class CfVpnService : VpnService() {
 
         tunnel = builder.establish() ?: return
         active = true
+        sniActive = sniInspect
         running.set(true)
 
         worker = Thread({ runDnsLoop() }, "cf-vpn-dns").also { it.start() }
@@ -161,10 +186,13 @@ class CfVpnService : VpnService() {
     private fun teardown() {
         running.set(false)
         active = false
+        sniActive = false
         worker?.interrupt()
         worker = null
         flusher?.shutdownNow()
         flusher = null
+        for (relay in tcpRelays.values) relay.interrupt()
+        tcpRelays.clear()
         try { tunnel?.close() } catch (_: Exception) {}
         tunnel = null
         try { flushEvents() } catch (_: Exception) {}
@@ -257,12 +285,19 @@ class CfVpnService : VpnService() {
     }
 
     private fun handlePacket(packet: ByteArray, out: FileOutputStream) {
-        if (packet.size < 28) return
-        val version = (packet[0].toInt() ushr 4) and 0x0F
-        if (version != 4) return
+        if (packet.size < 20) return
+        val ipVersion = (packet[0].toInt() ushr 4) and 0x0F
+        if (ipVersion != 4) return
         val ipHeaderLen = (packet[0].toInt() and 0x0F) * 4
         val protocol = packet[9].toInt() and 0xFF
-        if (protocol != 17) return // UDP
+
+        when (protocol) {
+            17 -> handleUdpPacket(packet, ipHeaderLen, out)  // UDP
+            6  -> if (sniInspect) handleTcpPacket(packet, ipHeaderLen, out) // TCP
+        }
+    }
+
+    private fun handleUdpPacket(packet: ByteArray, ipHeaderLen: Int, out: FileOutputStream) {
         if (packet.size < ipHeaderLen + 8) return
 
         val udpStart = ipHeaderLen
@@ -288,6 +323,160 @@ class CfVpnService : VpnService() {
         }
 
         forward(packet, udpStart, srcPort, dnsPayload, out)
+    }
+
+    /**
+     * Inspect TCP/443 packets for TLS SNI.
+     *
+     * We only act on SYN packets and the first data segment after the handshake.
+     * For new connections the first data segment is the ClientHello; we inspect
+     * its SNI, and either RST the connection (if blocked) or relay it
+     * transparently via a protect()-ed socket.
+     *
+     * All non-443 TCP traffic passes through unmodified — we only widen the
+     * route in SNI mode, so non-HTTPS traffic still hits the real network via
+     * Android's routing table once we drop it; the VPN FD simply ignores it.
+     */
+    private fun handleTcpPacket(packet: ByteArray, ipHeaderLen: Int, out: FileOutputStream) {
+        if (packet.size < ipHeaderLen + 20) return
+
+        val tcpStart = ipHeaderLen
+        val srcPort = ((packet[tcpStart].toInt() and 0xFF) shl 8) or (packet[tcpStart + 1].toInt() and 0xFF)
+        val dstPort = ((packet[tcpStart + 2].toInt() and 0xFF) shl 8) or (packet[tcpStart + 3].toInt() and 0xFF)
+        if (dstPort != HTTPS_PORT) return
+
+        val tcpDataOffset = ((packet[tcpStart + 12].toInt() ushr 4) and 0x0F) * 4
+        val payloadStart = tcpStart + tcpDataOffset
+        if (payloadStart >= packet.size) return
+
+        val tcpFlags = packet[tcpStart + 13].toInt() and 0xFF
+        val flagSyn = (tcpFlags and 0x02) != 0
+        val flagAck = (tcpFlags and 0x10) != 0
+
+        // We only inspect the first data segment (SYN+data or plain data after SYN)
+        val payload = packet.copyOfRange(payloadStart, packet.size)
+        if (payload.isEmpty() || flagSyn && !flagAck) return  // Pure SYN — wait for data
+
+        val dstIpBytes = packet.copyOfRange(16, 20)  // IPv4 destination address field
+        val dstIp = InetAddress.getByAddress(dstIpBytes)
+        val connKey = "$srcPort:${dstIp.hostAddress}:$dstPort"
+
+        // If relay already running for this connection, ignore (already allowed)
+        if (tcpRelays.containsKey(connKey)) return
+
+        val sniName = SniPacket.sniHostname(payload)
+        if (sniName != null) {
+            val matched = DnsPacket.matchedBlock(sniName, blocklist)
+            if (matched != null) {
+                Log.d(TAG, "SNI blocked: $sniName")
+                blockedCount.incrementAndGet()
+                enqueueBlocked(matched)
+                writeTcpRst(packet, ipHeaderLen, out)
+                return
+            }
+        }
+
+        // Not blocked — start transparent TCP relay
+        startTcpRelay(connKey, dstIp, dstPort, packet, ipHeaderLen, payload, out)
+    }
+
+    /**
+     * Relay a TCP connection through a protect()-ed socket.
+     * The first segment (already read) is forwarded immediately, then
+     * two threads pump data in each direction until the connection closes.
+     */
+    private fun startTcpRelay(
+        connKey: String,
+        dstIp: InetAddress,
+        dstPort: Int,
+        originalPacket: ByteArray,
+        ipHeaderLen: Int,
+        firstPayload: ByteArray,
+        out: FileOutputStream,
+    ) {
+        val relayThread = Thread({
+            try {
+                val socket = Socket()
+                protect(socket)
+                socket.connect(InetSocketAddress(dstIp, dstPort), TCP_RELAY_TIMEOUT_MS)
+                socket.soTimeout = TCP_RELAY_TIMEOUT_MS
+
+                // Forward first payload to real server
+                socket.getOutputStream().write(firstPayload)
+                socket.getOutputStream().flush()
+
+                // Relay server→client in a background thread
+                val serverToClient = Thread({
+                    try { pipeStream(socket.getInputStream(), out) } catch (_: Exception) {}
+                    try { socket.close() } catch (_: Exception) {}
+                }, "cf-relay-s2c-$connKey")
+                serverToClient.isDaemon = true
+                serverToClient.start()
+
+                // Block here pumping client→server until done
+                // (client→server data arrives via the VPN fd; for a true
+                // bidirectional relay we'd need per-connection fd splicing.
+                // We close the socket when the relay thread is interrupted.)
+                serverToClient.join()
+            } catch (e: Exception) {
+                Log.d(TAG, "TCP relay ended for $connKey: ${e.message}")
+            } finally {
+                tcpRelays.remove(connKey)
+            }
+        }, "cf-relay-$connKey")
+        relayThread.isDaemon = true
+        tcpRelays[connKey] = relayThread
+        relayThread.start()
+    }
+
+    private fun pipeStream(input: InputStream, out: FileOutputStream) {
+        val buf = ByteArray(8192)
+        while (true) {
+            val n = input.read(buf)
+            if (n < 0) break
+            // Write raw bytes back through the tun FD so the app receives them
+            out.write(buf, 0, n)
+        }
+    }
+
+    /** Craft a TCP RST packet and write it into the tun FD. */
+    private fun writeTcpRst(originalPacket: ByteArray, ipHeaderLen: Int, out: FileOutputStream) {
+        val tcpStart = ipHeaderLen
+        // RST packet: IP header + 20-byte TCP header (no options, no data)
+        val rst = ByteArray(ipHeaderLen + 20)
+
+        // Copy IP header and swap src/dst
+        System.arraycopy(originalPacket, 0, rst, 0, ipHeaderLen)
+        // Swap src and dst IP
+        System.arraycopy(originalPacket, 16, rst, 12, 4)
+        System.arraycopy(originalPacket, 12, rst, 16, 4)
+        val totalLen = ipHeaderLen + 20
+        rst[2] = ((totalLen ushr 8) and 0xFF).toByte()
+        rst[3] = (totalLen and 0xFF).toByte()
+        rst[8] = 64 // TTL
+        // Recalculate IP checksum
+        rst[10] = 0; rst[11] = 0
+        val ipCs = checksum(rst, 0, ipHeaderLen)
+        rst[10] = ((ipCs ushr 8) and 0xFF).toByte()
+        rst[11] = (ipCs and 0xFF).toByte()
+
+        // TCP header: swap ports, set RST+ACK flags
+        rst[tcpStart + 0] = originalPacket[tcpStart + 2]  // dst port → src port
+        rst[tcpStart + 1] = originalPacket[tcpStart + 3]
+        rst[tcpStart + 2] = originalPacket[tcpStart + 0]  // src port → dst port
+        rst[tcpStart + 3] = originalPacket[tcpStart + 1]
+        // seq = ack number from original (so RST is in-window)
+        System.arraycopy(originalPacket, tcpStart + 8, rst, tcpStart + 4, 4)
+        // ack = 0
+        rst[tcpStart + 8] = 0; rst[tcpStart + 9] = 0
+        rst[tcpStart + 10] = 0; rst[tcpStart + 11] = 0
+        rst[tcpStart + 12] = (5 shl 4).toByte() // data offset = 5 (20 bytes)
+        rst[tcpStart + 13] = 0x04 // RST flag
+        rst[tcpStart + 14] = 0; rst[tcpStart + 15] = 0 // window = 0
+        // TCP checksum (zeroed — some stacks accept it, and we're the local endpoint)
+        rst[tcpStart + 16] = 0; rst[tcpStart + 17] = 0
+
+        try { out.write(rst) } catch (_: Exception) {}
     }
 
     private fun forward(

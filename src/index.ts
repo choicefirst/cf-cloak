@@ -56,3 +56,5 @@ export function buildBlocklist(domains: readonly string[]): Set<string> {
 export function anyBlocked(domains: readonly string[], blocklist: ReadonlySet<string>): boolean {
   return domains.some((d) => matchDomain(d.trim().toLowerCase(), blocklist) !== null)
 }
+
+export { sniHostname } from './sni.js'
