@@ -21,6 +21,9 @@ android {
 }
 
 dependencies {
-    // No external dependencies — this library is intentionally self-contained.
-    // The open-source trust surface should be auditable without a dependency graph.
+    // Capacitor is provided by the host app at runtime; compileOnly keeps it
+    // out of the library's own artifact and the open-source dependency graph.
+    compileOnly "com.capacitorjs:android:8.3.1"
+    compileOnly "androidx.core:core:1.13.1"
+    compileOnly "androidx.appcompat:appcompat:1.7.0"
 }
