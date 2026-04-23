@@ -8,13 +8,12 @@
   "exports": {
     ".": {
       "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
       "types": "./dist/index.d.ts"
     }
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --test dist/index.test.js"
+    "test": "node --test 'dist/**/*.test.js'"
   },
   "devDependencies": {
     "typescript": "^5.8.3"
