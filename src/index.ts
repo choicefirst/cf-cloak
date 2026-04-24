@@ -151,3 +151,7 @@ export type {
   DecisionReason,
 } from './policy.js'
 export { DEFAULT_POLICY, evaluate } from './policy.js'
+
+// ── Blocklist signing / verification ──────────────────────────────────────────
+export type { SignedBlocklist } from './signing.js'
+export { buildSignaturePayload, signBlocklist, verifyBlocklist } from './signing.js'
