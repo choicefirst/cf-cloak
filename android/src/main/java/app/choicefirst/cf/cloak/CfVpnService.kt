@@ -185,9 +185,12 @@ class CfVpnService : VpnService() {
             .addDnsServer(TUNNEL_DNS_SINK)
             .addRoute(TUNNEL_DNS_SINK, 32)  // DNS-only route is always active
 
-        // SNI mode widens the tunnel to capture all TCP/443 traffic in addition to DNS.
+        // SNI mode widens the tunnel to capture all TCP/443 and UDP/443 traffic
+        // in addition to DNS (for QUIC blocking and SNI inspection).
         if (sniInspect) {
             builder.addRoute("0.0.0.0", 0)
+            // TODO(phase-6): add IPv6 route once writeTcpRst6() is implemented
+            // builder.addRoute("::", 0)
         }
 
         builder.setBlocking(true)
@@ -350,13 +353,16 @@ class CfVpnService : VpnService() {
     private fun handlePacket(packet: ByteArray, out: FileOutputStream) {
         if (packet.size < 20) return
         val ipVersion = (packet[0].toInt() ushr 4) and 0x0F
+        // TODO(phase-6): add IPv6 support — parse 40-byte fixed header, walk
+        // extension chain to find Next Header == TCP(6) or UDP(17), then
+        // dispatch to handleTcpPacket/handleUdpPacket with ipHeaderLen=40.
         if (ipVersion != 4) return
         val ipHeaderLen = (packet[0].toInt() and 0x0F) * 4
         val protocol = packet[9].toInt() and 0xFF
 
         when (protocol) {
-            17 -> handleUdpPacket(packet, ipHeaderLen, out)  // UDP
-            6  -> if (sniInspect) handleTcpPacket(packet, ipHeaderLen, out) // TCP
+            17 -> handleUdpPacket(packet, ipHeaderLen, out)   // UDP (DNS + QUIC)
+            6  -> if (sniInspect) handleTcpPacket(packet, ipHeaderLen, out) // TCP/SNI
         }
     }
 
@@ -366,6 +372,18 @@ class CfVpnService : VpnService() {
         val udpStart = ipHeaderLen
         val srcPort = ((packet[udpStart].toInt() and 0xFF) shl 8) or (packet[udpStart + 1].toInt() and 0xFF)
         val dstPort = ((packet[udpStart + 2].toInt() and 0xFF) shl 8) or (packet[udpStart + 3].toInt() and 0xFF)
+
+        // Phase-6 cheap QUIC blocking: when SNI inspection is active, drop all
+        // UDP/443 traffic. QUIC clients (Chrome, Instagram, YouTube) use UDP/443
+        // for HTTP/3 and would bypass the TCP/443 SNI check otherwise. Dropping
+        // the packet causes the client to retry and fall back to TCP/443, where
+        // our SNI inspection can then act.
+        //
+        // TODO(phase-6): replace this blanket drop with a proper QUIC Initial
+        // packet parser (HKDF-SHA256 key derivation + AES-128-GCM decryption per
+        // RFC 9001 §5) so we can block specific SNI hostnames instead of all QUIC.
+        if (sniInspect && dstPort == HTTPS_PORT) return   // drop → client falls back to TCP
+
         if (dstPort != 53) return
 
         val dnsStart = udpStart + 8
