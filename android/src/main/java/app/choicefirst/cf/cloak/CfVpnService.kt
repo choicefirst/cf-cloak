@@ -75,6 +75,7 @@ class CfVpnService : VpnService() {
         const val EXTRA_LOG_EVENTS = "log_events"
         const val EXTRA_SNI_INSPECT = "sni_inspect"
         const val EXTRA_SAMPLE_ALLOWED = "sample_allowed"
+        const val EXTRA_POLICY_JSON = "policy_json"
 
         private const val TAG = "CfVpn"
         private const val NOTIFICATION_ID = 42
@@ -100,6 +101,9 @@ class CfVpnService : VpnService() {
         /** Local event store — accessible by VpnPlugin for query/export. */
         @Volatile private var eventStore: EventStore? = null
         fun getEventStore(): EventStore? = eventStore
+
+        /** Active policy — hot-swappable via VpnPlugin.updatePolicy(). */
+        @Volatile var policy: Policy = Policy.DEFAULT
 
         fun isActive() = active
         fun isSniActive() = sniActive
@@ -149,6 +153,10 @@ class CfVpnService : VpnService() {
                 logEvents = intent.getBooleanExtra(EXTRA_LOG_EVENTS, true)
                 sniInspect = intent.getBooleanExtra(EXTRA_SNI_INSPECT, false)
                 sampleAllowed = intent.getBooleanExtra(EXTRA_SAMPLE_ALLOWED, false)
+                val policyJson = intent.getStringExtra(EXTRA_POLICY_JSON)
+                if (policyJson != null) {
+                    try { policy = Policy.fromJson(policyJson) } catch (_: Exception) { /* keep existing */ }
+                }
                 startTunnel(domains, v)
                 return START_STICKY
             }
@@ -398,10 +406,14 @@ class CfVpnService : VpnService() {
         val dstIp = packet.copyOfRange(16, 20)
 
         val matchResult = DnsPacket.matchedBlockDetailed(name, blocklist)
-        if (matchResult != null) {
+        val app = resolveApp(OsConstants.IPPROTO_UDP, srcIp, srcPort, dstIp, dstPort)
+        val decision = PolicyEngine.evaluate(
+            PolicyRequest(domain = name, category = matchResult?.category, app = app, matchedSuffix = matchResult?.suffix),
+            policy,
+        )
+        if (decision.action == PolicyAction.BLOCK) {
             blockedCount.incrementAndGet()
-            val app = resolveApp(OsConstants.IPPROTO_UDP, srcIp, srcPort, dstIp, dstPort)
-            enqueueBlocked(name, matchResult.suffix, app, matchResult.category, matchResult.source)
+            enqueueBlocked(name, matchResult?.suffix ?: name, app, matchResult?.category, matchResult?.source)
             val response = DnsPacket.nxDomainResponse(dnsPayload)
             writeUdpReply(packet, udpStart, srcPort, response, out)
             return
@@ -409,7 +421,6 @@ class CfVpnService : VpnService() {
 
         // Allowed path: optionally sample 1-in-100 for dashboard breadth
         if (sampleAllowed && (Math.random() < 0.01)) {
-            val app = resolveApp(OsConstants.IPPROTO_UDP, srcIp, srcPort, dstIp, dstPort)
             enqueueSampled(name, app)
         }
 
@@ -458,11 +469,15 @@ class CfVpnService : VpnService() {
         val sniName = SniPacket.sniHostname(payload)
         if (sniName != null) {
             val matchResult = DnsPacket.matchedBlockDetailed(sniName, blocklist)
-            if (matchResult != null) {
-                Log.d(TAG, "SNI blocked: $sniName")
+            val app = resolveApp(OsConstants.IPPROTO_TCP, packet.copyOfRange(12, 16), srcPort, dstIpBytes, dstPort)
+            val decision = PolicyEngine.evaluate(
+                PolicyRequest(domain = sniName, category = matchResult?.category, app = app, matchedSuffix = matchResult?.suffix),
+                policy,
+            )
+            if (decision.action == PolicyAction.BLOCK) {
+                Log.d(TAG, "SNI blocked: $sniName (reason=${decision.reason})")
                 blockedCount.incrementAndGet()
-                val app = resolveApp(OsConstants.IPPROTO_TCP, packet.copyOfRange(12, 16), srcPort, dstIpBytes, dstPort)
-                enqueueBlocked(sniName, matchResult.suffix, app, matchResult.category, matchResult.source)
+                enqueueBlocked(sniName, matchResult?.suffix ?: sniName, app, matchResult?.category, matchResult?.source)
                 writeTcpRst(packet, ipHeaderLen, out)
                 return
             }

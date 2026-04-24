@@ -140,3 +140,14 @@ export function anyBlocked(domains: readonly string[], blocklist: ReadonlySet<st
 }
 
 export { sniHostname } from './sni.js'
+
+// ── Policy engine ─────────────────────────────────────────────────────────────
+export type {
+  Action,
+  TempAllow,
+  Policy,
+  PolicyRequest,
+  Decision,
+  DecisionReason,
+} from './policy.js'
+export { DEFAULT_POLICY, evaluate } from './policy.js'

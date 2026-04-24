@@ -173,4 +173,28 @@ class VpnPlugin : Plugin() {
             }
         }
     }
+
+    /**
+     * Hot-swap the active policy without restarting the VPN service.
+     *
+     * The new policy is applied immediately to all subsequent DNS/SNI
+     * decisions. The change is not persisted to disk — the caller is
+     * responsible for re-sending the policy after a service restart.
+     *
+     * Args:
+     *   policy — JSON-serialised [Policy] object.
+     */
+    @PluginMethod
+    fun updatePolicy(call: PluginCall) {
+        val policyJson = call.getString("policy") ?: run {
+            call.reject("missing 'policy' field")
+            return
+        }
+        try {
+            CfVpnService.policy = Policy.fromJson(policyJson)
+            call.resolve()
+        } catch (ex: Exception) {
+            call.reject("invalid policy JSON: ${ex.message}")
+        }
+    }
 }
