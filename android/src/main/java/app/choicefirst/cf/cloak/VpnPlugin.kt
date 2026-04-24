@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.VpnService
 import androidx.activity.result.ActivityResult
 import androidx.core.content.ContextCompat
+import com.getcapacitor.JSArray
 import com.getcapacitor.JSObject
 import com.getcapacitor.Plugin
 import com.getcapacitor.PluginCall
@@ -94,5 +95,82 @@ class VpnPlugin : Plugin() {
             put("version", CfVpnService.currentVersion())
             put("sni_inspect", CfVpnService.isSniActive())
         })
+    }
+
+    /**
+     * Query local blocked events from the on-device Room DB.
+     *
+     * Args (all optional):
+     *   since  — epoch millis lower bound (default: 0, i.e. all events)
+     *   app    — filter to a specific package name
+     *   limit  — max results (default: 500)
+     */
+    @PluginMethod
+    fun getEvents(call: PluginCall) {
+        val since = call.getLong("since") ?: 0L
+        val app = call.getString("app")
+        val limit = call.getInt("limit") ?: 500
+        getBridge().execute {
+            val store = CfVpnService.getEventStore()
+            if (store == null) {
+                call.resolve(JSObject().apply { put("events", JSArray()) })
+                return@execute
+            }
+            try {
+                val events = store.query(since, app, limit)
+                val arr = JSArray()
+                for (e in events) {
+                    arr.put(JSObject().apply {
+                        put("id", e.id)
+                        put("ts", e.ts)
+                        put("domain", e.domain)
+                        put("matched", e.matched)
+                        put("app", e.app)
+                        put("category", e.category)
+                        put("source", e.source)
+                        put("action", e.action)
+                    })
+                }
+                call.resolve(JSObject().apply { put("events", arr) })
+            } catch (ex: Exception) {
+                call.reject("getEvents failed: ${ex.message}")
+            }
+        }
+    }
+
+    /** Delete all locally stored events. */
+    @PluginMethod
+    fun clearEvents(call: PluginCall) {
+        CfVpnService.getEventStore()?.clear()
+        call.resolve(JSObject().apply { put("cleared", true) })
+    }
+
+    /**
+     * Aggregate blocked + sampled counts per app since [since] millis.
+     * Returns an array sorted by count descending.
+     */
+    @PluginMethod
+    fun getAppStats(call: PluginCall) {
+        val since = call.getLong("since") ?: 0L
+        getBridge().execute {
+            val store = CfVpnService.getEventStore()
+            if (store == null) {
+                call.resolve(JSObject().apply { put("stats", JSArray()) })
+                return@execute
+            }
+            try {
+                val stats = store.appStats(since)
+                val arr = JSArray()
+                for (s in stats) {
+                    arr.put(JSObject().apply {
+                        put("app", s.app)
+                        put("count", s.count)
+                    })
+                }
+                call.resolve(JSObject().apply { put("stats", arr) })
+            } catch (ex: Exception) {
+                call.reject("getAppStats failed: ${ex.message}")
+            }
+        }
     }
 }

@@ -6,9 +6,12 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
+import android.os.Process
+import android.system.OsConstants
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import java.io.FileInputStream
@@ -71,6 +74,7 @@ class CfVpnService : VpnService() {
         const val EXTRA_AUTH_TOKEN = "auth_token"
         const val EXTRA_LOG_EVENTS = "log_events"
         const val EXTRA_SNI_INSPECT = "sni_inspect"
+        const val EXTRA_SAMPLE_ALLOWED = "sample_allowed"
 
         private const val TAG = "CfVpn"
         private const val NOTIFICATION_ID = 42
@@ -81,6 +85,7 @@ class CfVpnService : VpnService() {
         private const val UPSTREAM_DNS_PORT = 53
         private const val HTTPS_PORT = 443
         private const val TCP_RELAY_TIMEOUT_MS = 10_000
+        private const val MAX_LOCAL_EVENTS = 10_000
 
         private const val QUEUE_MAX = 2_000
         private const val FLUSH_BATCH = 500
@@ -91,6 +96,10 @@ class CfVpnService : VpnService() {
         private val blockedCount = AtomicInteger(0)
         @Volatile private var blocklist: Set<String> = emptySet()
         @Volatile private var version: String = ""
+
+        /** Local event store — accessible by VpnPlugin for query/export. */
+        @Volatile private var eventStore: EventStore? = null
+        fun getEventStore(): EventStore? = eventStore
 
         fun isActive() = active
         fun isSniActive() = sniActive
@@ -108,6 +117,10 @@ class CfVpnService : VpnService() {
     private var authToken: String = ""
     private var logEvents: Boolean = true
     private var sniInspect: Boolean = false
+    private var sampleAllowed: Boolean = false
+
+    private var appResolver: AppResolver? = null
+    private var connectivityManager: ConnectivityManager? = null
 
     // Active TCP relay threads keyed by connection ID (srcPort:dstIp:dstPort)
     private val tcpRelays = ConcurrentHashMap<String, Thread>()
@@ -135,6 +148,7 @@ class CfVpnService : VpnService() {
                 authToken = intent.getStringExtra(EXTRA_AUTH_TOKEN) ?: ""
                 logEvents = intent.getBooleanExtra(EXTRA_LOG_EVENTS, true)
                 sniInspect = intent.getBooleanExtra(EXTRA_SNI_INSPECT, false)
+                sampleAllowed = intent.getBooleanExtra(EXTRA_SAMPLE_ALLOWED, false)
                 startTunnel(domains, v)
                 return START_STICKY
             }
@@ -153,6 +167,14 @@ class CfVpnService : VpnService() {
         blocklist = domains.map { it.lowercase().trim() }.filter { it.isNotEmpty() }.toSet()
         version = v
         blockedCount.set(0)
+
+        // Init UID→package resolver and connectivity manager (API 29+ for UID lookups)
+        appResolver = AppResolver(packageManager)
+        connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+
+        // Ensure local event store exists and trim stale events from prior sessions
+        if (eventStore == null) eventStore = RoomEventStore(applicationContext)
+        eventStore?.trim(MAX_LOCAL_EVENTS)
 
         ensureNotificationChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
@@ -193,6 +215,8 @@ class CfVpnService : VpnService() {
         flusher = null
         for (relay in tcpRelays.values) relay.interrupt()
         tcpRelays.clear()
+        appResolver = null
+        connectivityManager = null
         try { tunnel?.close() } catch (_: Exception) {}
         tunnel = null
         try { flushEvents() } catch (_: Exception) {}
@@ -212,10 +236,49 @@ class CfVpnService : VpnService() {
         }
     }
 
-    private fun enqueueBlocked(matchedDomain: String) {
+    /**
+     * Record a blocked event.
+     *
+     * Always writes to the local Room store (regardless of [logEvents]) so
+     * the user can always inspect on-device what was blocked, even in
+     * Silent mode. Upload to Supabase only when [logEvents] is true.
+     */
+    private fun enqueueBlocked(
+        domain: String,
+        matched: String,
+        app: String = "unknown",
+        category: String? = null,
+        source: String? = null,
+    ) {
+        eventStore?.insert(
+            BlockedEvent(
+                ts = System.currentTimeMillis(),
+                domain = domain,
+                matched = matched,
+                app = app,
+                category = category,
+                source = source,
+                action = "BLOCK",
+            )
+        )
         if (!logEvents) return
         while (eventQueue.size >= QUEUE_MAX) eventQueue.pollFirst() ?: break
-        eventQueue.addLast(matchedDomain to nowIso())
+        eventQueue.addLast(matched to nowIso())
+    }
+
+    /** Record a sampled allowed event (only written locally; never uploaded). */
+    private fun enqueueSampled(domain: String, app: String) {
+        eventStore?.insert(
+            BlockedEvent(
+                ts = System.currentTimeMillis(),
+                domain = domain,
+                matched = "",
+                app = app,
+                category = null,
+                source = null,
+                action = "ALLOW_SAMPLED",
+            )
+        )
     }
 
     private fun flushEvents() {
@@ -313,13 +376,23 @@ class CfVpnService : VpnService() {
             return
         }
 
-        val matched = DnsPacket.matchedBlock(name, blocklist)
-        if (matched != null) {
+        val srcIp = packet.copyOfRange(12, 16)
+        val dstIp = packet.copyOfRange(16, 20)
+
+        val matchResult = DnsPacket.matchedBlockDetailed(name, blocklist)
+        if (matchResult != null) {
             blockedCount.incrementAndGet()
-            enqueueBlocked(matched)
+            val app = resolveApp(OsConstants.IPPROTO_UDP, srcIp, srcPort, dstIp, dstPort)
+            enqueueBlocked(name, matchResult.suffix, app, matchResult.category, matchResult.source)
             val response = DnsPacket.nxDomainResponse(dnsPayload)
             writeUdpReply(packet, udpStart, srcPort, response, out)
             return
+        }
+
+        // Allowed path: optionally sample 1-in-100 for dashboard breadth
+        if (sampleAllowed && (Math.random() < 0.01)) {
+            val app = resolveApp(OsConstants.IPPROTO_UDP, srcIp, srcPort, dstIp, dstPort)
+            enqueueSampled(name, app)
         }
 
         forward(packet, udpStart, srcPort, dnsPayload, out)
@@ -366,11 +439,12 @@ class CfVpnService : VpnService() {
 
         val sniName = SniPacket.sniHostname(payload)
         if (sniName != null) {
-            val matched = DnsPacket.matchedBlock(sniName, blocklist)
-            if (matched != null) {
+            val matchResult = DnsPacket.matchedBlockDetailed(sniName, blocklist)
+            if (matchResult != null) {
                 Log.d(TAG, "SNI blocked: $sniName")
                 blockedCount.incrementAndGet()
-                enqueueBlocked(matched)
+                val app = resolveApp(OsConstants.IPPROTO_TCP, packet.copyOfRange(12, 16), srcPort, dstIpBytes, dstPort)
+                enqueueBlocked(sniName, matchResult.suffix, app, matchResult.category, matchResult.source)
                 writeTcpRst(packet, ipHeaderLen, out)
                 return
             }
@@ -436,6 +510,35 @@ class CfVpnService : VpnService() {
             if (n < 0) break
             // Write raw bytes back through the tun FD so the app receives them
             out.write(buf, 0, n)
+        }
+    }
+
+    /**
+     * Resolve the originating Android package for a network connection.
+     *
+     * Uses [ConnectivityManager.getConnectionOwnerUid] (API 29+) to look up
+     * the UID owning the socket, then maps that to a package name. Falls back
+     * to "unknown" on older APIs or when the lookup fails (e.g., the socket
+     * has already been destroyed by the time we inspect the packet).
+     */
+    private fun resolveApp(
+        protocol: Int,
+        srcIp: ByteArray,
+        srcPort: Int,
+        dstIp: ByteArray,
+        dstPort: Int,
+    ): String {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return "unknown"
+        val cm = connectivityManager ?: return "unknown"
+        return try {
+            val uid = cm.getConnectionOwnerUid(
+                protocol,
+                InetSocketAddress(InetAddress.getByAddress(srcIp), srcPort),
+                InetSocketAddress(InetAddress.getByAddress(dstIp), dstPort),
+            )
+            appResolver?.resolveUid(uid) ?: "unknown"
+        } catch (_: Exception) {
+            "unknown"
         }
     }
 

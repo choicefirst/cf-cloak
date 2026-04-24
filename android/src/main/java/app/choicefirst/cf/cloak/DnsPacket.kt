@@ -3,6 +3,17 @@ package app.choicefirst.cf.cloak
 import java.nio.ByteBuffer
 
 /**
+ * Rich result returned by [DnsPacket.matchedBlockDetailed].
+ * Carries the matched blocklist suffix plus optional category/source metadata
+ * that is populated when the blocklist is served with rich annotations.
+ */
+data class MatchResult(
+    val suffix: String,
+    val category: String?,
+    val source: String?,
+)
+
+/**
  * Minimal DNS packet helpers — enough to extract the queried name from a
  * request and synthesize an NXDOMAIN response for blocked domains.
  *
@@ -75,5 +86,22 @@ object DnsPacket {
             idx = name.indexOf('.', idx + 1)
         }
         return null
+    }
+
+    /**
+     * Rich-result variant of [matchedBlock].
+     *
+     * @param metadata Optional map from blocklist suffix → (category, source).
+     *                 Pass [emptyMap] when the blocklist is a flat set (back-compat).
+     * @return [MatchResult] carrying the matched suffix plus any metadata, or null.
+     */
+    fun matchedBlockDetailed(
+        name: String,
+        blocklist: Set<String>,
+        metadata: Map<String, Pair<String?, String?>> = emptyMap(),
+    ): MatchResult? {
+        val suffix = matchedBlock(name, blocklist) ?: return null
+        val (category, source) = metadata[suffix] ?: (null to null)
+        return MatchResult(suffix = suffix, category = category, source = source)
     }
 }

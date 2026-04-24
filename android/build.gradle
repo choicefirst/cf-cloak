@@ -1,5 +1,6 @@
 apply plugin: 'com.android.library'
 apply plugin: 'kotlin-android'
+apply plugin: 'kotlin-kapt'
 
 android {
     namespace = "app.choicefirst.cf.cloak"
@@ -26,4 +27,8 @@ dependencies {
     compileOnly "com.capacitorjs:android:8.3.1"
     compileOnly "androidx.core:core:1.13.1"
     compileOnly "androidx.appcompat:appcompat:1.7.0"
+
+    // Room — on-device event log (~500KB, worth it for ergonomics + query safety)
+    implementation "androidx.room:room-runtime:2.6.1"
+    kapt "androidx.room:room-compiler:2.6.1"
 }

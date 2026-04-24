@@ -10,6 +10,33 @@
  * See README.md for details.
  */
 
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/**
+ * A blocklist rule with optional metadata.
+ * The string shorthand (domain only) is accepted anywhere a RuleEntry is.
+ */
+export interface RuleEntry {
+  domain: string
+  category?: string
+  source?: string
+}
+
+/**
+ * Rich match result returned by [matchDomainDetailed].
+ * Mirrors the Kotlin `MatchResult` data class in DnsPacket.kt.
+ */
+export interface MatchResult {
+  /** The blocklist suffix that matched (e.g. "doubleclick.net"). */
+  suffix: string
+  /** Tracker category (e.g. "analytics", "ads") or null for plain blocklists. */
+  category: string | null
+  /** Blocklist source identifier or null for plain blocklists. */
+  source: string | null
+}
+
 /**
  * Suffix-match a domain name against a blocklist set.
  *
@@ -47,6 +74,61 @@ export function buildBlocklist(domains: readonly string[]): Set<string> {
     if (norm.length > 0) out.add(norm)
   }
   return out
+}
+
+/**
+ * Build a blocklist Set and a metadata Map from a mixed array of plain
+ * domain strings or rich [RuleEntry] objects.
+ *
+ * Back-compatible: plain strings produce entries with null category/source.
+ *
+ * @example
+ * const { set, meta } = buildBlocklistDetailed([
+ *   { domain: 'doubleclick.net', category: 'ads', source: 'easylist' },
+ *   'tracker.com',
+ * ])
+ */
+export function buildBlocklistDetailed(
+  rules: readonly (RuleEntry | string)[],
+): { set: Set<string>; meta: Map<string, { category: string | null; source: string | null }> } {
+  const set = new Set<string>()
+  const meta = new Map<string, { category: string | null; source: string | null }>()
+  for (const rule of rules) {
+    if (typeof rule === 'string') {
+      const norm = rule.trim().toLowerCase()
+      if (norm.length > 0) set.add(norm)
+    } else {
+      const norm = rule.domain.trim().toLowerCase()
+      if (norm.length > 0) {
+        set.add(norm)
+        meta.set(norm, { category: rule.category ?? null, source: rule.source ?? null })
+      }
+    }
+  }
+  return { set, meta }
+}
+
+/**
+ * Rich-result variant of [matchDomain].
+ *
+ * Mirrors `DnsPacket.matchedBlockDetailed()` in the Kotlin layer exactly.
+ *
+ * @param meta  Optional metadata map produced by [buildBlocklistDetailed].
+ *              Pass an empty Map for plain blocklists (back-compat).
+ */
+export function matchDomainDetailed(
+  name: string,
+  blocklist: ReadonlySet<string>,
+  meta: ReadonlyMap<string, { category: string | null; source: string | null }> = new Map(),
+): MatchResult | null {
+  const suffix = matchDomain(name, blocklist)
+  if (suffix === null) return null
+  const m = meta.get(suffix)
+  return {
+    suffix,
+    category: m?.category ?? null,
+    source: m?.source ?? null,
+  }
 }
 
 /**

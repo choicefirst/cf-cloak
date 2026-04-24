@@ -7,7 +7,7 @@
  */
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { matchDomain, buildBlocklist, anyBlocked } from './index.js'
+import { matchDomain, buildBlocklist, anyBlocked, matchDomainDetailed, buildBlocklistDetailed } from './index.js'
 
 // ---------------------------------------------------------------------------
 // matchDomain
@@ -130,5 +130,91 @@ describe('anyBlocked', () => {
   it('normalises input domains before matching', () => {
     const bl = new Set(['evil.com'])
     assert.equal(anyBlocked(['  TRACKER.EVIL.COM  '], bl), true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// matchDomainDetailed
+// ---------------------------------------------------------------------------
+
+describe('matchDomainDetailed', () => {
+  it('returns null when no match', () => {
+    const bl = new Set(['evil.com'])
+    assert.equal(matchDomainDetailed('safe.com', bl), null)
+  })
+
+  it('returns suffix with null category/source for plain blocklist', () => {
+    const bl = new Set(['doubleclick.net'])
+    const result = matchDomainDetailed('px.doubleclick.net', bl)
+    assert.deepEqual(result, { suffix: 'doubleclick.net', category: null, source: null })
+  })
+
+  it('returns metadata when meta map is provided', () => {
+    const bl = new Set(['ads.com'])
+    const meta = new Map([['ads.com', { category: 'ads', source: 'easylist' }]])
+    const result = matchDomainDetailed('banner.ads.com', bl, meta)
+    assert.deepEqual(result, { suffix: 'ads.com', category: 'ads', source: 'easylist' })
+  })
+
+  it('returns null category/source when suffix not in meta', () => {
+    const bl = new Set(['foo.com', 'bar.net'])
+    const meta = new Map([['foo.com', { category: 'analytics', source: 'mine' }]])
+    // bar.net is in blocklist but not in meta
+    const result = matchDomainDetailed('x.bar.net', bl, meta)
+    assert.deepEqual(result, { suffix: 'bar.net', category: null, source: null })
+  })
+
+  it('exact match on domain in meta', () => {
+    const bl = new Set(['evil.com'])
+    const meta = new Map([['evil.com', { category: 'malware', source: 'custom' }]])
+    const result = matchDomainDetailed('evil.com', bl, meta)
+    assert.deepEqual(result, { suffix: 'evil.com', category: 'malware', source: 'custom' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// buildBlocklistDetailed
+// ---------------------------------------------------------------------------
+
+describe('buildBlocklistDetailed', () => {
+  it('handles plain strings', () => {
+    const { set, meta } = buildBlocklistDetailed(['evil.com', 'tracker.net'])
+    assert.equal(set.size, 2)
+    assert.equal(set.has('evil.com'), true)
+    assert.equal(meta.size, 0)
+  })
+
+  it('handles rich RuleEntry objects', () => {
+    const { set, meta } = buildBlocklistDetailed([
+      { domain: 'doubleclick.net', category: 'ads', source: 'easylist' },
+    ])
+    assert.equal(set.has('doubleclick.net'), true)
+    assert.deepEqual(meta.get('doubleclick.net'), { category: 'ads', source: 'easylist' })
+  })
+
+  it('handles mixed plain strings and RuleEntry objects', () => {
+    const { set, meta } = buildBlocklistDetailed([
+      'plain.com',
+      { domain: 'rich.net', category: 'analytics', source: 'mine' },
+    ])
+    assert.equal(set.size, 2)
+    assert.equal(meta.size, 1)
+    assert.equal(meta.has('plain.com'), false)
+  })
+
+  it('normalises domain case and whitespace', () => {
+    const { set } = buildBlocklistDetailed(['  EVIL.COM  ', { domain: '  BAD.NET  ', category: 'ads' }])
+    assert.equal(set.has('evil.com'), true)
+    assert.equal(set.has('bad.net'), true)
+  })
+
+  it('skips empty strings', () => {
+    const { set } = buildBlocklistDetailed(['', '   ', { domain: '' }])
+    assert.equal(set.size, 0)
+  })
+
+  it('RuleEntry with missing optional fields gets null in meta', () => {
+    const { meta } = buildBlocklistDetailed([{ domain: 'x.com' }])
+    assert.deepEqual(meta.get('x.com'), { category: null, source: null })
   })
 })
