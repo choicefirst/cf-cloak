@@ -1,4 +1,4 @@
-package app.choicefirst.cf.cloak
+package app.choicefirst.eu.cloak
 
 import org.junit.Assert.*
 import org.junit.Test

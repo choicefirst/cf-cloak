@@ -1,4 +1,4 @@
-package app.choicefirst.cf.cloak
+package app.choicefirst.eu.cloak
 
 import android.content.pm.PackageManager
 import java.util.concurrent.ConcurrentHashMap

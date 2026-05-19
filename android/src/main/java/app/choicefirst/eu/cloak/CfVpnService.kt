@@ -1,4 +1,4 @@
-package app.choicefirst.cf.cloak
+package app.choicefirst.eu.cloak
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -65,8 +65,8 @@ import org.json.JSONObject
 class CfVpnService : VpnService() {
 
     companion object {
-        const val ACTION_START = "app.choicefirst.cf.vpn.START"
-        const val ACTION_STOP = "app.choicefirst.cf.vpn.STOP"
+        const val ACTION_START = "app.choicefirst.eu.vpn.START"
+        const val ACTION_STOP = "app.choicefirst.eu.vpn.STOP"
         const val EXTRA_DOMAINS = "domains"
         const val EXTRA_VERSION = "version"
         const val EXTRA_SUPABASE_URL = "supabase_url"

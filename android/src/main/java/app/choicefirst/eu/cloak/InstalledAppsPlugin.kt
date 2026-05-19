@@ -1,4 +1,4 @@
-package app.choicefirst.cf.cloak
+package app.choicefirst.eu.cloak
 
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
