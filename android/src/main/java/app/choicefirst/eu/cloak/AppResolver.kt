@@ -17,6 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
 class AppResolver(private val pm: PackageManager) {
 
     private val cache = ConcurrentHashMap<Int, String>(64)
+    private val labelCache = ConcurrentHashMap<String, String>(64)
 
     /**
      * Resolve a Linux UID to a package name.
@@ -29,6 +30,19 @@ class AppResolver(private val pm: PackageManager) {
         if (uid == android.os.Process.INVALID_UID) return null
         return cache.computeIfAbsent(uid) {
             pm.getNameForUid(it) ?: "uid:$it"
+        }
+    }
+
+    /** Best-effort human label for a package name (e.g. "Chrome"). */
+    fun labelForPackage(packageName: String): String? {
+        if (packageName.isBlank() || packageName == "unknown" || packageName.startsWith("uid:")) return null
+        return labelCache.computeIfAbsent(packageName) {
+            try {
+                val info = pm.getApplicationInfo(it, 0)
+                pm.getApplicationLabel(info).toString()
+            } catch (_: Exception) {
+                it
+            }
         }
     }
 }

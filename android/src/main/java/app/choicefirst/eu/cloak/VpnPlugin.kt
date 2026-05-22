@@ -61,6 +61,7 @@ class VpnPlugin : Plugin() {
         val authToken = call.getString("auth_token") ?: ""
         val logEvents = call.getBoolean("log_events", true) ?: true
         val sniInspect = call.getBoolean("sni_inspect", false) ?: false
+        val liveNotifications = call.getBoolean("live_notifications", false) ?: false
 
         val intent = Intent(context, CfVpnService::class.java).apply {
             action = CfVpnService.ACTION_START
@@ -71,6 +72,7 @@ class VpnPlugin : Plugin() {
             putExtra(CfVpnService.EXTRA_AUTH_TOKEN, authToken)
             putExtra(CfVpnService.EXTRA_LOG_EVENTS, logEvents)
             putExtra(CfVpnService.EXTRA_SNI_INSPECT, sniInspect)
+            putExtra(CfVpnService.EXTRA_LIVE_NOTIFICATIONS, liveNotifications)
         }
         ContextCompat.startForegroundService(context, intent)
 
@@ -196,5 +198,12 @@ class VpnPlugin : Plugin() {
         } catch (ex: Exception) {
             call.reject("invalid policy JSON: ${ex.message}")
         }
+    }
+
+    @PluginMethod
+    fun setLiveNotifications(call: PluginCall) {
+        val enabled = call.getBoolean("enabled", false) ?: false
+        CfVpnService.setLiveNotificationsEnabled(enabled)
+        call.resolve()
     }
 }

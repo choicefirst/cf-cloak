@@ -74,12 +74,15 @@ class CfVpnService : VpnService() {
         const val EXTRA_AUTH_TOKEN = "auth_token"
         const val EXTRA_LOG_EVENTS = "log_events"
         const val EXTRA_SNI_INSPECT = "sni_inspect"
+        const val EXTRA_LIVE_NOTIFICATIONS = "live_notifications"
         const val EXTRA_SAMPLE_ALLOWED = "sample_allowed"
         const val EXTRA_POLICY_JSON = "policy_json"
 
         private const val TAG = "CfVpn"
         private const val NOTIFICATION_ID = 42
         private const val CHANNEL_ID = "cf_vpn"
+        private const val ALERT_CHANNEL_ID = "cf_vpn_alerts"
+        private const val ALERT_NOTIFICATION_ID_BASE = 1_000
         private const val TUNNEL_LOCAL = "10.47.0.2"
         private const val TUNNEL_DNS_SINK = "10.47.0.3"
         private const val UPSTREAM_DNS = "1.1.1.1"
@@ -97,6 +100,7 @@ class CfVpnService : VpnService() {
         private val blockedCount = AtomicInteger(0)
         @Volatile private var blocklist: Set<String> = emptySet()
         @Volatile private var version: String = ""
+        @Volatile private var liveNotificationsEnabled = false
 
         /** Local event store — accessible by VpnPlugin for query/export. */
         @Volatile private var eventStore: EventStore? = null
@@ -104,6 +108,10 @@ class CfVpnService : VpnService() {
 
         /** Active policy — hot-swappable via VpnPlugin.updatePolicy(). */
         @Volatile var policy: Policy = Policy.DEFAULT
+
+        fun setLiveNotificationsEnabled(enabled: Boolean) {
+            liveNotificationsEnabled = enabled
+        }
 
         fun isActive() = active
         fun isSniActive() = sniActive
@@ -125,6 +133,8 @@ class CfVpnService : VpnService() {
 
     private var appResolver: AppResolver? = null
     private var connectivityManager: ConnectivityManager? = null
+    private val alertedThisSession = ConcurrentHashMap.newKeySet<String>()
+    private val nextAlertId = AtomicInteger(ALERT_NOTIFICATION_ID_BASE)
 
     // Active TCP relay threads keyed by connection ID (srcPort:dstIp:dstPort)
     private val tcpRelays = ConcurrentHashMap<String, Thread>()
@@ -152,6 +162,7 @@ class CfVpnService : VpnService() {
                 authToken = intent.getStringExtra(EXTRA_AUTH_TOKEN) ?: ""
                 logEvents = intent.getBooleanExtra(EXTRA_LOG_EVENTS, true)
                 sniInspect = intent.getBooleanExtra(EXTRA_SNI_INSPECT, false)
+                liveNotificationsEnabled = intent.getBooleanExtra(EXTRA_LIVE_NOTIFICATIONS, false)
                 sampleAllowed = intent.getBooleanExtra(EXTRA_SAMPLE_ALLOWED, false)
                 val policyJson = intent.getStringExtra(EXTRA_POLICY_JSON)
                 if (policyJson != null) {
@@ -175,6 +186,8 @@ class CfVpnService : VpnService() {
         blocklist = domains.map { it.lowercase().trim() }.filter { it.isNotEmpty() }.toSet()
         version = v
         blockedCount.set(0)
+        alertedThisSession.clear()
+        nextAlertId.set(ALERT_NOTIFICATION_ID_BASE)
 
         // Init UID→package resolver and connectivity manager (API 29+ for UID lookups)
         appResolver = AppResolver(packageManager)
@@ -272,9 +285,39 @@ class CfVpnService : VpnService() {
                 action = "BLOCK",
             )
         )
+        maybeNotifyBlocked(domain, matched, app)
         if (!logEvents) return
         while (eventQueue.size >= QUEUE_MAX) eventQueue.pollFirst() ?: break
         eventQueue.addLast(matched to nowIso())
+    }
+
+    private fun maybeNotifyBlocked(domain: String, matched: String, app: String) {
+        if (!liveNotificationsEnabled) return
+
+        val signature = "${matched.lowercase(Locale.ROOT)}|${app.lowercase(Locale.ROOT)}"
+        if (!alertedThisSession.add(signature)) return
+
+        val appLabel = appResolver?.labelForPackage(app)
+        val title = if (appLabel != null) "Tracker blocked in $appLabel" else "Tracker blocked"
+        val body = if (domain.equals(matched, ignoreCase = true)) domain else "$domain via $matched"
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+
+        try {
+            nm.notify(
+                nextAlertId.getAndIncrement(),
+                NotificationCompat.Builder(this, ALERT_CHANNEL_ID)
+                    .setSmallIcon(applicationInfo.icon)
+                    .setContentTitle(title)
+                    .setContentText(body)
+                    .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+                    .setAutoCancel(true)
+                    .setContentIntent(buildOpenAppIntent())
+                    .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                    .build(),
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "live block alert failed", e)
+        }
     }
 
     /** Record a sampled allowed event (only written locally; never uploaded). */
@@ -702,29 +745,43 @@ class CfVpnService : VpnService() {
     private fun ensureNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        if (nm.getNotificationChannel(CHANNEL_ID) != null) return
-        nm.createNotificationChannel(NotificationChannel(
-            CHANNEL_ID,
-            "ChoiceFirst protection",
-            NotificationManager.IMPORTANCE_LOW,
-        ).apply {
-            description = "Shown while CF is blocking trackers."
-            setShowBadge(false)
-        })
+        if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+            nm.createNotificationChannel(NotificationChannel(
+                CHANNEL_ID,
+                "CF Cloak",
+                NotificationManager.IMPORTANCE_LOW,
+            ).apply {
+                description = "Shown while CF Cloak is blocking trackers."
+                setShowBadge(false)
+            })
+        }
+        if (nm.getNotificationChannel(ALERT_CHANNEL_ID) == null) {
+            nm.createNotificationChannel(NotificationChannel(
+                ALERT_CHANNEL_ID,
+                "Live block alerts",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ).apply {
+                description = "Alerts when ChoiceFirst blocks a tracker in real time."
+            })
+        }
     }
 
-    private fun buildNotification(): Notification {
+    private fun buildOpenAppIntent(): PendingIntent? {
         val openApp = packageManager.getLaunchIntentForPackage(packageName)
-        val contentIntent = openApp?.let {
+        return openApp?.let {
             PendingIntent.getActivity(
                 this, 0, it,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             )
         }
+    }
+
+    private fun buildNotification(): Notification {
+        val contentIntent = buildOpenAppIntent()
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(applicationInfo.icon)
-            .setContentTitle("ChoiceFirst is protecting you")
+            .setContentTitle("CF Cloak is active")
             .setContentText("Blocking ${blocklist.size} tracker domains")
             .setOngoing(true)
             .setContentIntent(contentIntent)
