@@ -1,10 +1,10 @@
 package app.choicefirst.eu.cloak
 
-import android.util.Base64
 import java.security.KeyFactory
 import java.security.MessageDigest
 import java.security.Signature
 import java.security.spec.X509EncodedKeySpec
+import java.util.Base64
 
 /**
  * Verifies Ed25519 blocklist signatures produced by the Supabase signing service.
@@ -55,7 +55,7 @@ object SignatureVerifier {
                 .replace("-----BEGIN PUBLIC KEY-----", "")
                 .replace("-----END PUBLIC KEY-----", "")
                 .replace("\\s".toRegex(), "")
-            val keyBytes = Base64.decode(pemBody, Base64.DEFAULT)
+            val keyBytes = Base64.getDecoder().decode(pemBody)
             val spec = X509EncodedKeySpec(keyBytes)
             KeyFactory.getInstance("Ed25519").generatePublic(spec)
         } catch (_: Exception) {
@@ -74,7 +74,7 @@ object SignatureVerifier {
                         else -> s
                     }
                 }
-            Base64.decode(padded, Base64.DEFAULT)
+            Base64.getDecoder().decode(padded)
         } catch (_: Exception) {
             return false
         }

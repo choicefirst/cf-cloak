@@ -1,0 +1,2 @@
+||tracker.blocklistproject.example^
+@@auth.blocklistproject.example

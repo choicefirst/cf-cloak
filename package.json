@@ -9,11 +9,16 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./policy": {
+      "import": "./dist/policy.js",
+      "types": "./dist/policy.d.ts"
     }
   },
   "scripts": {
     "build": "tsc",
-    "test": "node --test dist/*.test.js"
+    "test": "node --test \"dist/**/*.test.js\"",
+    "report:review-gated": "npm run build && node ./scripts/review-gated-rollout-report.mjs"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

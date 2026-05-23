@@ -38,6 +38,36 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) before submitting anything.
 
 ---
 
+## Development
+
+Build and test the package from the nested repo root:
+
+```bash
+npm run build
+npm test
+```
+
+Generate a review-gated rollout report for one Tier C upstream using the bundled sanitized source snapshots:
+
+```bash
+npm run report:review-gated -- hagezi dist/reports/hagezi-rollout-report.json
+```
+
+To evaluate a different captured snapshot set, point the same command at a directory that contains source files matching the built-in snapshot filenames (`oisd_small.txt`, `ddg_tracker_blocklists.json`, `hagezi.txt`, etc.):
+
+```bash
+node ./scripts/review-gated-rollout-report.mjs --source=hagezi --snapshot-dir=./my-snapshots --out=dist/reports/hagezi-rollout-report.json
+```
+
+The generated report includes:
+- baseline vs candidate source sets
+- rule-level before/after diffs
+- Light and Extreme replay deltas
+- a rollback plan
+- warnings when the replay traces do not exercise any candidate-source deltas
+
+---
+
 ## Security
 
 Found a vulnerability? Please do **not** open a public issue.

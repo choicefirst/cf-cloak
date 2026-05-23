@@ -1,0 +1,22 @@
+{
+  "readme": "https://example.invalid/ddg-tracker-blocklists",
+  "version": "fixture-ddg-2026-05-23",
+  "trackers": {
+    "api.ddg.example": {
+      "owner": {
+        "name": "DDG Example LLC",
+        "displayName": "DDG Example"
+      },
+      "default": "block"
+    }
+  },
+  "packageNames": {
+    "com.ddg.example": "DDG Example LLC"
+  },
+  "entities": {
+    "DDG Example LLC": {
+      "score": 42,
+      "signals": ["email_address", "AAID"]
+    }
+  }
+}

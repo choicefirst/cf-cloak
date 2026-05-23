@@ -1,0 +1,258 @@
+{
+  "oisd_small": {
+    "version": null,
+    "readme": null,
+    "exceptions": [],
+    "packageOwners": {},
+    "entities": {},
+    "canonicalRules": [
+      {
+        "id": "exact:tracker.oisd-small.example",
+        "domain": "tracker.oisd-small.example",
+        "matchScope": "exact",
+        "registrableDomain": null,
+        "sources": ["oisd_small"],
+        "sourceCount": 1,
+        "categories": [],
+        "entityNames": [],
+        "confidenceTier": "medium",
+        "confidenceScore": 0.75,
+        "lightAction": "observe",
+        "extremeAction": "block",
+        "compatibilityTags": [],
+        "reviewNotes": [],
+        "firstSeenAt": "",
+        "lastSeenAt": ""
+      }
+    ]
+  },
+  "oisd_big": {
+    "version": null,
+    "readme": null,
+    "exceptions": [],
+    "packageOwners": {},
+    "entities": {},
+    "canonicalRules": [
+      {
+        "id": "exact:ads.oisd-big.example",
+        "domain": "ads.oisd-big.example",
+        "matchScope": "exact",
+        "registrableDomain": null,
+        "sources": ["oisd_big"],
+        "sourceCount": 1,
+        "categories": [],
+        "entityNames": [],
+        "confidenceTier": "medium",
+        "confidenceScore": 0.65,
+        "lightAction": "observe",
+        "extremeAction": "block",
+        "compatibilityTags": [],
+        "reviewNotes": [],
+        "firstSeenAt": "",
+        "lastSeenAt": ""
+      }
+    ]
+  },
+  "ddg_tracker_blocklists": {
+    "version": "fixture-ddg-2026-05-23",
+    "readme": "https://example.invalid/ddg-tracker-blocklists",
+    "exceptions": [],
+    "packageOwners": {
+      "com.ddg.example": "DDG Example LLC"
+    },
+    "entities": {
+      "DDG Example LLC": {
+        "displayName": "DDG Example",
+        "score": 42,
+        "signals": ["AAID", "email_address"]
+      }
+    },
+    "canonicalRules": [
+      {
+        "id": "exact:api.ddg.example",
+        "domain": "api.ddg.example",
+        "matchScope": "exact",
+        "registrableDomain": null,
+        "sources": ["ddg_tracker_blocklists"],
+        "sourceCount": 1,
+        "categories": ["tracking"],
+        "entityNames": ["DDG Example", "DDG Example LLC"],
+        "confidenceTier": "review",
+        "confidenceScore": 0.2,
+        "lightAction": "observe",
+        "extremeAction": "block",
+        "compatibilityTags": [],
+        "reviewNotes": ["ddg_default:block"],
+        "firstSeenAt": "",
+        "lastSeenAt": ""
+      }
+    ]
+  },
+  "blocklistproject_tracking": {
+    "version": null,
+    "readme": null,
+    "exceptions": [
+      {
+        "domain": "auth.blocklistproject.example",
+        "matchScope": "exact"
+      }
+    ],
+    "packageOwners": {},
+    "entities": {},
+    "canonicalRules": [
+      {
+        "id": "suffix:tracker.blocklistproject.example",
+        "domain": "tracker.blocklistproject.example",
+        "matchScope": "suffix",
+        "registrableDomain": null,
+        "sources": ["blocklistproject_tracking"],
+        "sourceCount": 1,
+        "categories": [],
+        "entityNames": [],
+        "confidenceTier": "medium",
+        "confidenceScore": 0.65,
+        "lightAction": "observe",
+        "extremeAction": "block",
+        "compatibilityTags": [],
+        "reviewNotes": [],
+        "firstSeenAt": "",
+        "lastSeenAt": ""
+      }
+    ]
+  },
+  "1hosts": {
+    "version": null,
+    "readme": null,
+    "exceptions": [],
+    "packageOwners": {},
+    "entities": {},
+    "canonicalRules": [
+      {
+        "id": "exact:collector.1hosts.example",
+        "domain": "collector.1hosts.example",
+        "matchScope": "exact",
+        "registrableDomain": null,
+        "sources": ["1hosts"],
+        "sourceCount": 1,
+        "categories": [],
+        "entityNames": [],
+        "confidenceTier": "review",
+        "confidenceScore": 0.35,
+        "lightAction": "observe",
+        "extremeAction": "block",
+        "compatibilityTags": [],
+        "reviewNotes": [],
+        "firstSeenAt": "",
+        "lastSeenAt": ""
+      }
+    ]
+  },
+  "adguard_dns_filter": {
+    "version": null,
+    "readme": null,
+    "exceptions": [],
+    "packageOwners": {},
+    "entities": {},
+    "canonicalRules": [
+      {
+        "id": "suffix:ads.adguard.example",
+        "domain": "ads.adguard.example",
+        "matchScope": "suffix",
+        "registrableDomain": null,
+        "sources": ["adguard_dns_filter"],
+        "sourceCount": 1,
+        "categories": [],
+        "entityNames": [],
+        "confidenceTier": "review",
+        "confidenceScore": 0.35,
+        "lightAction": "observe",
+        "extremeAction": "block",
+        "compatibilityTags": [],
+        "reviewNotes": [],
+        "firstSeenAt": "",
+        "lastSeenAt": ""
+      }
+    ]
+  },
+  "hagezi": {
+    "version": null,
+    "readme": null,
+    "exceptions": [],
+    "packageOwners": {},
+    "entities": {},
+    "canonicalRules": [
+      {
+        "id": "suffix:telemetry.hagezi.example",
+        "domain": "telemetry.hagezi.example",
+        "matchScope": "suffix",
+        "registrableDomain": null,
+        "sources": ["hagezi"],
+        "sourceCount": 1,
+        "categories": [],
+        "entityNames": [],
+        "confidenceTier": "review",
+        "confidenceScore": 0.35,
+        "lightAction": "observe",
+        "extremeAction": "block",
+        "compatibilityTags": [],
+        "reviewNotes": [],
+        "firstSeenAt": "",
+        "lastSeenAt": ""
+      }
+    ]
+  },
+  "easylist": {
+    "version": null,
+    "readme": null,
+    "exceptions": [],
+    "packageOwners": {},
+    "entities": {},
+    "canonicalRules": [
+      {
+        "id": "suffix:pixel.easylist.example",
+        "domain": "pixel.easylist.example",
+        "matchScope": "suffix",
+        "registrableDomain": null,
+        "sources": ["easylist"],
+        "sourceCount": 1,
+        "categories": [],
+        "entityNames": [],
+        "confidenceTier": "review",
+        "confidenceScore": 0.35,
+        "lightAction": "observe",
+        "extremeAction": "block",
+        "compatibilityTags": [],
+        "reviewNotes": [],
+        "firstSeenAt": "",
+        "lastSeenAt": ""
+      }
+    ]
+  },
+  "steven_black": {
+    "version": null,
+    "readme": null,
+    "exceptions": [],
+    "packageOwners": {},
+    "entities": {},
+    "canonicalRules": [
+      {
+        "id": "exact:metrics.stevenblack.example",
+        "domain": "metrics.stevenblack.example",
+        "matchScope": "exact",
+        "registrableDomain": null,
+        "sources": ["steven_black"],
+        "sourceCount": 1,
+        "categories": [],
+        "entityNames": [],
+        "confidenceTier": "review",
+        "confidenceScore": 0.35,
+        "lightAction": "observe",
+        "extremeAction": "block",
+        "compatibilityTags": [],
+        "reviewNotes": [],
+        "firstSeenAt": "",
+        "lastSeenAt": ""
+      }
+    ]
+  }
+}

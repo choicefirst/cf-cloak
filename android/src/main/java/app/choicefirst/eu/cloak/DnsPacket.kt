@@ -9,8 +9,48 @@ import java.nio.ByteBuffer
  */
 data class MatchResult(
     val suffix: String,
+    val matchScope: String = "suffix",
+    val registrableDomain: String? = null,
+    val confidenceScore: Double? = null,
+    val entityNames: List<String> = emptyList(),
     val category: String?,
+    val categories: List<String> = emptyList(),
     val source: String?,
+    val sources: List<String> = emptyList(),
+    val confidenceTier: String? = null,
+    val compatibilityTags: List<String> = emptyList(),
+    val reviewNotes: List<String> = emptyList(),
+    val lightAction: ModeAction?,
+    val extremeAction: ModeAction?,
+)
+
+fun MatchResult.toMatchedPolicyRule(): MatchedPolicyRule = MatchedPolicyRule(
+    domain = suffix,
+    confidenceScore = confidenceScore,
+    entityNames = entityNames,
+    matchScope = matchScope,
+    registrableDomain = registrableDomain,
+    categories = categories.ifEmpty { listOfNotNull(category) },
+    confidenceTier = confidenceTier,
+    compatibilityTags = compatibilityTags,
+    reviewNotes = reviewNotes,
+    lightAction = lightAction,
+    extremeAction = extremeAction,
+)
+
+data class RuleMetadata(
+    val category: String?,
+    val registrableDomain: String? = null,
+    val confidenceScore: Double? = null,
+    val entityNames: List<String> = emptyList(),
+    val categories: List<String> = emptyList(),
+    val source: String?,
+    val sources: List<String> = emptyList(),
+    val confidenceTier: String? = null,
+    val compatibilityTags: List<String> = emptyList(),
+    val reviewNotes: List<String> = emptyList(),
+    val lightAction: ModeAction?,
+    val extremeAction: ModeAction?,
 )
 
 /**
@@ -26,6 +66,8 @@ data class MatchResult(
  * engine. Licensed under AGPLv3. See the repository root for full terms.
  */
 object DnsPacket {
+
+    private fun metadataKey(matchScope: String, domain: String): String = "$matchScope:$domain"
 
     /** Extract the first QNAME from a DNS query payload. Returns null on parse failure. */
     fun queryName(payload: ByteArray): String? {
@@ -102,6 +144,71 @@ object DnsPacket {
     ): MatchResult? {
         val suffix = matchedBlock(name, blocklist) ?: return null
         val (category, source) = metadata[suffix] ?: (null to null)
-        return MatchResult(suffix = suffix, category = category, source = source)
+        return MatchResult(
+            suffix = suffix,
+            matchScope = if (name == suffix) "exact" else "suffix",
+            confidenceScore = null,
+            entityNames = emptyList(),
+            category = category,
+            categories = listOfNotNull(category),
+            source = source,
+            sources = listOfNotNull(source),
+            lightAction = null,
+            extremeAction = null,
+        )
+    }
+
+    fun matchedRuleDetailed(
+        name: String,
+        exactBlocklist: Set<String>,
+        suffixBlocklist: Set<String>,
+        metadata: Map<String, RuleMetadata> = emptyMap(),
+    ): MatchResult? {
+        if (name in exactBlocklist) {
+            val ruleMetadata = metadata[metadataKey("exact", name)]
+            return MatchResult(
+                suffix = name,
+                matchScope = "exact",
+                registrableDomain = ruleMetadata?.registrableDomain,
+                confidenceScore = ruleMetadata?.confidenceScore,
+                entityNames = ruleMetadata?.entityNames ?: emptyList(),
+                category = ruleMetadata?.category,
+                categories = ruleMetadata?.categories ?: emptyList(),
+                source = ruleMetadata?.source,
+                sources = ruleMetadata?.sources ?: emptyList(),
+                confidenceTier = ruleMetadata?.confidenceTier,
+                compatibilityTags = ruleMetadata?.compatibilityTags ?: emptyList(),
+                reviewNotes = ruleMetadata?.reviewNotes ?: emptyList(),
+                lightAction = ruleMetadata?.lightAction,
+                extremeAction = ruleMetadata?.extremeAction,
+            )
+        }
+
+        var idx = name.indexOf('.')
+        while (idx >= 0 && idx < name.length - 1) {
+            val suffix = name.substring(idx + 1)
+            if (suffix in suffixBlocklist) {
+                val ruleMetadata = metadata[metadataKey("suffix", suffix)]
+                return MatchResult(
+                    suffix = suffix,
+                    matchScope = "suffix",
+                    registrableDomain = ruleMetadata?.registrableDomain,
+                    confidenceScore = ruleMetadata?.confidenceScore,
+                    entityNames = ruleMetadata?.entityNames ?: emptyList(),
+                    category = ruleMetadata?.category,
+                    categories = ruleMetadata?.categories ?: emptyList(),
+                    source = ruleMetadata?.source,
+                    sources = ruleMetadata?.sources ?: emptyList(),
+                    confidenceTier = ruleMetadata?.confidenceTier,
+                    compatibilityTags = ruleMetadata?.compatibilityTags ?: emptyList(),
+                    reviewNotes = ruleMetadata?.reviewNotes ?: emptyList(),
+                    lightAction = ruleMetadata?.lightAction,
+                    extremeAction = ruleMetadata?.extremeAction,
+                )
+            }
+            idx = name.indexOf('.', idx + 1)
+        }
+
+        return null
     }
 }

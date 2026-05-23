@@ -146,29 +146,114 @@ describe('matchDomainDetailed', () => {
   it('returns suffix with null category/source for plain blocklist', () => {
     const bl = new Set(['doubleclick.net'])
     const result = matchDomainDetailed('px.doubleclick.net', bl)
-    assert.deepEqual(result, { suffix: 'doubleclick.net', category: null, source: null })
+    assert.deepEqual(result, {
+      suffix: 'doubleclick.net',
+      matchScope: 'suffix',
+      registrableDomain: null,
+      category: null,
+      categories: [],
+      source: null,
+      sources: [],
+      entityNames: [],
+      confidenceTier: null,
+      compatibilityTags: [],
+      lightAction: null,
+      extremeAction: null,
+    })
   })
 
   it('returns metadata when meta map is provided', () => {
     const bl = new Set(['ads.com'])
-    const meta = new Map([['ads.com', { category: 'ads', source: 'easylist' }]])
+    const meta = new Map([['ads.com', {
+      registrableDomain: 'ads.com',
+      category: 'ads',
+      categories: ['ads'],
+      source: 'easylist',
+      sources: ['easylist'],
+      entityNames: ['Example Ads'],
+      confidenceTier: 'medium' as const,
+      compatibilityTags: ['media_delivery'],
+      lightAction: 'observe' as const,
+      extremeAction: 'block' as const,
+    }]])
     const result = matchDomainDetailed('banner.ads.com', bl, meta)
-    assert.deepEqual(result, { suffix: 'ads.com', category: 'ads', source: 'easylist' })
+    assert.deepEqual(result, {
+      suffix: 'ads.com',
+      matchScope: 'suffix',
+      registrableDomain: 'ads.com',
+      category: 'ads',
+      categories: ['ads'],
+      source: 'easylist',
+      sources: ['easylist'],
+      entityNames: ['Example Ads'],
+      confidenceTier: 'medium',
+      compatibilityTags: ['media_delivery'],
+      lightAction: 'observe',
+      extremeAction: 'block',
+    })
   })
 
   it('returns null category/source when suffix not in meta', () => {
     const bl = new Set(['foo.com', 'bar.net'])
-    const meta = new Map([['foo.com', { category: 'analytics', source: 'mine' }]])
+    const meta = new Map([['foo.com', {
+      registrableDomain: null,
+      category: 'analytics',
+      categories: ['analytics'],
+      source: 'mine',
+      sources: ['mine'],
+      entityNames: [],
+      confidenceTier: null,
+      compatibilityTags: [],
+      lightAction: null,
+      extremeAction: null,
+    }]])
     // bar.net is in blocklist but not in meta
     const result = matchDomainDetailed('x.bar.net', bl, meta)
-    assert.deepEqual(result, { suffix: 'bar.net', category: null, source: null })
+    assert.deepEqual(result, {
+      suffix: 'bar.net',
+      matchScope: 'suffix',
+      registrableDomain: null,
+      category: null,
+      categories: [],
+      source: null,
+      sources: [],
+      entityNames: [],
+      confidenceTier: null,
+      compatibilityTags: [],
+      lightAction: null,
+      extremeAction: null,
+    })
   })
 
   it('exact match on domain in meta', () => {
     const bl = new Set(['evil.com'])
-    const meta = new Map([['evil.com', { category: 'malware', source: 'custom' }]])
+    const meta = new Map([['evil.com', {
+      registrableDomain: 'evil.com',
+      category: 'malware',
+      categories: ['malware'],
+      source: 'custom',
+      sources: ['custom'],
+      entityNames: [],
+      confidenceTier: 'high' as const,
+      compatibilityTags: [],
+      lightAction: 'block' as const,
+      extremeAction: 'block' as const,
+    }]])
     const result = matchDomainDetailed('evil.com', bl, meta)
-    assert.deepEqual(result, { suffix: 'evil.com', category: 'malware', source: 'custom' })
+    assert.deepEqual(result, {
+      suffix: 'evil.com',
+      matchScope: 'exact',
+      registrableDomain: 'evil.com',
+      category: 'malware',
+      categories: ['malware'],
+      source: 'custom',
+      sources: ['custom'],
+      entityNames: [],
+      confidenceTier: 'high',
+      compatibilityTags: [],
+      lightAction: 'block',
+      extremeAction: 'block',
+    })
   })
 })
 
@@ -189,7 +274,18 @@ describe('buildBlocklistDetailed', () => {
       { domain: 'doubleclick.net', category: 'ads', source: 'easylist' },
     ])
     assert.equal(set.has('doubleclick.net'), true)
-    assert.deepEqual(meta.get('doubleclick.net'), { category: 'ads', source: 'easylist' })
+    assert.deepEqual(meta.get('doubleclick.net'), {
+      registrableDomain: null,
+      category: 'ads',
+      categories: ['ads'],
+      source: 'easylist',
+      sources: ['easylist'],
+      entityNames: [],
+      confidenceTier: null,
+      compatibilityTags: [],
+      lightAction: null,
+      extremeAction: null,
+    })
   })
 
   it('handles mixed plain strings and RuleEntry objects', () => {
@@ -215,6 +311,48 @@ describe('buildBlocklistDetailed', () => {
 
   it('RuleEntry with missing optional fields gets null in meta', () => {
     const { meta } = buildBlocklistDetailed([{ domain: 'x.com' }])
-    assert.deepEqual(meta.get('x.com'), { category: null, source: null })
+    assert.deepEqual(meta.get('x.com'), {
+      registrableDomain: null,
+      category: null,
+      categories: [],
+      source: null,
+      sources: [],
+      entityNames: [],
+      confidenceTier: null,
+      compatibilityTags: [],
+      lightAction: null,
+      extremeAction: null,
+    })
+  })
+
+  it('preserves richer canonical metadata with compatibility shorthands', () => {
+    const { meta } = buildBlocklistDetailed([
+      {
+        domain: 'tracker.example.com',
+        registrableDomain: 'Example.com',
+        category: 'tracking',
+        categories: ['tracking', 'analytics'],
+        source: 'oisd_small',
+        sources: ['oisd_small', 'ddg_tracker_blocklists'],
+        entityNames: ['Branch Metrics', 'Branch Metrics, Inc.'],
+        confidenceTier: 'high',
+        compatibilityTags: ['auth', 'app_api'],
+        lightAction: 'observe',
+        extremeAction: 'block',
+      },
+    ])
+
+    assert.deepEqual(meta.get('tracker.example.com'), {
+      registrableDomain: 'example.com',
+      category: 'tracking',
+      categories: ['tracking', 'analytics'],
+      source: 'oisd_small',
+      sources: ['oisd_small', 'ddg_tracker_blocklists'],
+      entityNames: ['Branch Metrics', 'Branch Metrics, Inc.'],
+      confidenceTier: 'high',
+      compatibilityTags: ['auth', 'app_api'],
+      lightAction: 'observe',
+      extremeAction: 'block',
+    })
   })
 })

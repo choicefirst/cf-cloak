@@ -125,6 +125,128 @@ class DnsPacketTest {
         assertNotNull(result)
         assertEquals("ads", result!!.category)
         assertEquals("easylist", result.source)
+        assertNull(result.lightAction)
+        assertNull(result.extremeAction)
+    }
+
+    @Test
+    fun `matchedRuleDetailed respects exact scope`() {
+        assertNull(
+            DnsPacket.matchedRuleDetailed(
+                "cdn.api.example.com",
+                exactBlocklist = setOf("api.example.com"),
+                suffixBlocklist = emptySet(),
+            ),
+        )
+    }
+
+    @Test
+    fun `matchedRuleDetailed prefers exact rule metadata`() {
+        val metadata = mapOf(
+            "exact:api.example.com" to RuleMetadata(
+                category = "analytics",
+                registrableDomain = "example.com",
+                confidenceScore = 0.95,
+                entityNames = listOf("Example Analytics"),
+                source = "ddg_tracker_blocklists",
+                reviewNotes = listOf("exact-match"),
+                lightAction = ModeAction.OBSERVE,
+                extremeAction = ModeAction.BLOCK,
+            ),
+            "suffix:example.com" to RuleMetadata(
+                category = "ads",
+                source = "oisd_small",
+                lightAction = ModeAction.BLOCK,
+                extremeAction = ModeAction.BLOCK,
+            ),
+        )
+
+        val result = DnsPacket.matchedRuleDetailed(
+            "api.example.com",
+            exactBlocklist = setOf("api.example.com"),
+            suffixBlocklist = setOf("example.com"),
+            metadata = metadata,
+        )
+
+        assertNotNull(result)
+        assertEquals("api.example.com", result!!.suffix)
+        assertEquals("exact", result.matchScope)
+        assertEquals("example.com", result.registrableDomain)
+        assertEquals(0.95, result.confidenceScore ?: 0.0, 0.0001)
+        assertEquals(listOf("Example Analytics"), result.entityNames)
+        assertEquals("analytics", result.category)
+        assertEquals(listOf("exact-match"), result.reviewNotes)
+        assertEquals("ddg_tracker_blocklists", result.source)
+        assertEquals(ModeAction.OBSERVE, result.lightAction)
+        assertEquals(ModeAction.BLOCK, result.extremeAction)
+    }
+
+    @Test
+    fun `matchedRuleDetailed returns longest suffix metadata`() {
+        val metadata = mapOf(
+            "suffix:example.com" to RuleMetadata(
+                category = "ads",
+                source = "oisd_small",
+                lightAction = ModeAction.BLOCK,
+                extremeAction = ModeAction.BLOCK,
+            ),
+            "suffix:sub.example.com" to RuleMetadata(
+                category = "analytics",
+                registrableDomain = "example.com",
+                confidenceScore = 0.65,
+                entityNames = listOf("Sub Example Analytics"),
+                source = "ddg_tracker_blocklists",
+                reviewNotes = listOf("longest-suffix"),
+                lightAction = ModeAction.OBSERVE,
+                extremeAction = ModeAction.BLOCK,
+            ),
+        )
+
+        val result = DnsPacket.matchedRuleDetailed(
+            "cdn.sub.example.com",
+            exactBlocklist = emptySet(),
+            suffixBlocklist = setOf("example.com", "sub.example.com"),
+            metadata = metadata,
+        )
+
+        assertNotNull(result)
+        assertEquals("sub.example.com", result!!.suffix)
+        assertEquals("suffix", result.matchScope)
+        assertEquals("example.com", result.registrableDomain)
+        assertEquals(0.65, result.confidenceScore ?: 0.0, 0.0001)
+        assertEquals(listOf("Sub Example Analytics"), result.entityNames)
+        assertEquals("analytics", result.category)
+        assertEquals(listOf("longest-suffix"), result.reviewNotes)
+        assertEquals(ModeAction.OBSERVE, result.lightAction)
+    }
+
+    @Test
+    fun `matched result converts into matched policy rule`() {
+        val result = MatchResult(
+            suffix = "evil.com",
+            matchScope = "suffix",
+            registrableDomain = "evil.com",
+            confidenceScore = 0.9,
+            entityNames = listOf("Example Tracker"),
+            category = "tracking",
+            categories = listOf("tracking", "analytics"),
+            source = "oisd_small",
+            reviewNotes = listOf("ddg_default:block"),
+            lightAction = ModeAction.OBSERVE,
+            extremeAction = ModeAction.BLOCK,
+        )
+
+        val matchedRule = result.toMatchedPolicyRule()
+
+        assertEquals("evil.com", matchedRule.domain)
+        assertEquals(0.9, matchedRule.confidenceScore ?: 0.0, 0.0001)
+        assertEquals(listOf("Example Tracker"), matchedRule.entityNames)
+        assertEquals("suffix", matchedRule.matchScope)
+        assertEquals("evil.com", matchedRule.registrableDomain)
+        assertEquals(listOf("tracking", "analytics"), matchedRule.categories)
+        assertEquals(listOf("ddg_default:block"), matchedRule.reviewNotes)
+        assertEquals(ModeAction.OBSERVE, matchedRule.lightAction)
+        assertEquals(ModeAction.BLOCK, matchedRule.extremeAction)
     }
 
     // ── nxDomainResponse ─────────────────────────────────────────────────────

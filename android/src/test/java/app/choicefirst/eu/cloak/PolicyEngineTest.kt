@@ -10,6 +10,18 @@ class PolicyEngineTest {
 
     private val NOW = 1_700_000_000_000L
 
+    private fun matchedRule(
+        domain: String = "evil.com",
+        categories: List<String> = listOf("tracking"),
+        lightAction: ModeAction = ModeAction.OBSERVE,
+        extremeAction: ModeAction = ModeAction.BLOCK,
+    ): MatchedPolicyRule = MatchedPolicyRule(
+        domain = domain,
+        categories = categories,
+        lightAction = lightAction,
+        extremeAction = extremeAction,
+    )
+
     // ── Default policy ────────────────────────────────────────────────────────
 
     @Test
@@ -20,6 +32,7 @@ class PolicyEngineTest {
             NOW,
         )
         assertEquals(PolicyAction.BLOCK, d.action)
+        assertEquals(DecisionEffect.BLOCK, d.effect)
         assertEquals(DecisionReason.DEFAULT_BLOCK, d.reason)
     }
 
@@ -31,7 +44,98 @@ class PolicyEngineTest {
             NOW,
         )
         assertEquals(PolicyAction.ALLOW, d.action)
+        assertEquals(DecisionEffect.ALLOW, d.effect)
         assertEquals(DecisionReason.DEFAULT_ALLOW, d.reason)
+    }
+
+    @Test
+    fun `light mode observes matched rules when canonical action is observe`() {
+        val d = PolicyEngine.evaluate(
+            PolicyRequest(
+                domain = "tracker.evil.com",
+                matchedSuffix = "evil.com",
+                lightAction = ModeAction.OBSERVE,
+                extremeAction = ModeAction.BLOCK,
+            ),
+            Policy.DEFAULT,
+            NOW,
+        )
+
+        assertEquals(PolicyAction.ALLOW, d.action)
+        assertEquals(DecisionEffect.OBSERVE, d.effect)
+        assertEquals(DecisionReason.RULE_OBSERVE, d.reason)
+    }
+
+    @Test
+    fun `light mode can evaluate directly from matched canonical rule`() {
+        val d = PolicyEngine.evaluate(
+            PolicyRequest(
+                domain = "tracker.evil.com",
+                matchedRule = matchedRule(),
+            ),
+            Policy.DEFAULT,
+            NOW,
+        )
+
+        assertEquals(PolicyAction.ALLOW, d.action)
+        assertEquals(DecisionEffect.OBSERVE, d.effect)
+        assertEquals(DecisionReason.RULE_OBSERVE, d.reason)
+    }
+
+    @Test
+    fun `extreme mode blocks the same matched rule`() {
+        val d = PolicyEngine.evaluate(
+            PolicyRequest(
+                domain = "tracker.evil.com",
+                matchedSuffix = "evil.com",
+                lightAction = ModeAction.OBSERVE,
+                extremeAction = ModeAction.BLOCK,
+            ),
+            Policy(mode = EnforcementMode.EXTREME),
+            NOW,
+        )
+
+        assertEquals(PolicyAction.BLOCK, d.action)
+        assertEquals(DecisionEffect.BLOCK, d.effect)
+        assertEquals(DecisionReason.RULE_BLOCK, d.reason)
+    }
+
+    @Test
+    fun `explicit request mode wins over surrounding policy mode`() {
+        val d = PolicyEngine.evaluate(
+            PolicyRequest(
+                domain = "tracker.evil.com",
+                mode = EnforcementMode.EXTREME,
+                matchedSuffix = "evil.com",
+                lightAction = ModeAction.OBSERVE,
+                extremeAction = ModeAction.BLOCK,
+            ),
+            Policy.DEFAULT,
+            NOW,
+        )
+
+        assertEquals(PolicyAction.BLOCK, d.action)
+        assertEquals(DecisionEffect.BLOCK, d.effect)
+        assertEquals(DecisionReason.RULE_BLOCK, d.reason)
+    }
+
+    @Test
+    fun `category override still beats observed rule`() {
+        val d = PolicyEngine.evaluate(
+            PolicyRequest(
+                domain = "tracker.evil.com",
+                matchedSuffix = "evil.com",
+                category = "tracking",
+                lightAction = ModeAction.OBSERVE,
+                extremeAction = ModeAction.BLOCK,
+            ),
+            Policy(categoryEnabled = mapOf("tracking" to true)),
+            NOW,
+        )
+
+        assertEquals(PolicyAction.BLOCK, d.action)
+        assertEquals(DecisionEffect.BLOCK, d.effect)
+        assertEquals(DecisionReason.CATEGORY_BLOCKED, d.reason)
     }
 
     // ── Temp allows ───────────────────────────────────────────────────────────
@@ -102,6 +206,54 @@ class PolicyEngineTest {
         assertEquals(PolicyAction.BLOCK, d.action)
     }
 
+    @Test
+    fun `domain override prefers exact match over broader suffix`() {
+        val p = Policy(
+            domainOverrides = mapOf(
+                "evil.com" to PolicyAction.BLOCK,
+                "tracker.evil.com" to PolicyAction.ALLOW,
+            ),
+        )
+        val d = PolicyEngine.evaluate(
+            PolicyRequest(domain = "tracker.evil.com", matchedSuffix = "evil.com"),
+            p, NOW,
+        )
+        assertEquals(PolicyAction.ALLOW, d.action)
+        assertEquals(DecisionReason.DOMAIN_OVERRIDE, d.reason)
+    }
+
+    @Test
+    fun `domain override prefers longest matching suffix`() {
+        val p = Policy(
+            domainOverrides = mapOf(
+                "evil.com" to PolicyAction.BLOCK,
+                "sub.evil.com" to PolicyAction.ALLOW,
+            ),
+        )
+        val d = PolicyEngine.evaluate(
+            PolicyRequest(domain = "tracker.sub.evil.com", matchedSuffix = "evil.com"),
+            p, NOW,
+        )
+        assertEquals(PolicyAction.ALLOW, d.action)
+        assertEquals(DecisionReason.DOMAIN_OVERRIDE, d.reason)
+    }
+
+    @Test
+    fun `system allowlist allows matched domains before app overrides`() {
+        val p = Policy(appOverrides = mapOf("com.browser" to PolicyAction.BLOCK))
+        val d = PolicyEngine.evaluate(
+            PolicyRequest(
+                domain = "tracker.evil.com",
+                matchedSuffix = "evil.com",
+                app = "com.browser",
+                systemAllowlisted = true,
+            ),
+            p, NOW,
+        )
+        assertEquals(PolicyAction.ALLOW, d.action)
+        assertEquals(DecisionReason.SYSTEM_ALLOWLIST, d.reason)
+    }
+
     // ── App overrides ─────────────────────────────────────────────────────────
 
     @Test
@@ -143,6 +295,20 @@ class PolicyEngineTest {
         val p = Policy(defaultAction = PolicyAction.ALLOW, categoryEnabled = mapOf("ads" to true))
         val d = PolicyEngine.evaluate(
             PolicyRequest(domain = "tracker.evil.com", matchedSuffix = "evil.com", category = "ads"),
+            p, NOW,
+        )
+        assertEquals(PolicyAction.BLOCK, d.action)
+        assertEquals(DecisionReason.CATEGORY_BLOCKED, d.reason)
+    }
+
+    @Test
+    fun `matched canonical rule supplies category when legacy category is absent`() {
+        val p = Policy(defaultAction = PolicyAction.ALLOW, categoryEnabled = mapOf("tracking" to true))
+        val d = PolicyEngine.evaluate(
+            PolicyRequest(
+                domain = "tracker.evil.com",
+                matchedRule = matchedRule(categories = listOf("tracking")),
+            ),
             p, NOW,
         )
         assertEquals(PolicyAction.BLOCK, d.action)
@@ -195,7 +361,14 @@ class PolicyEngineTest {
         val json = """{"version":1,"defaultAction":"block"}"""
         val p = Policy.fromJson(json)
         assertEquals(1, p.version)
+        assertEquals(EnforcementMode.LIGHT, p.mode)
         assertEquals(PolicyAction.BLOCK, p.defaultAction)
+    }
+
+    @Test
+    fun `fromJson parses mode`() {
+        val p = Policy.fromJson("""{"version":2,"mode":"extreme"}""")
+        assertEquals(EnforcementMode.EXTREME, p.mode)
     }
 
     @Test
@@ -241,6 +414,7 @@ class PolicyEngineTest {
     fun `fromJson handles missing optional fields gracefully`() {
         val p = Policy.fromJson("""{"version":2}""")
         assertEquals(2, p.version)
+        assertEquals(EnforcementMode.LIGHT, p.mode)
         assertEquals(PolicyAction.BLOCK, p.defaultAction)
         assertTrue(p.categoryEnabled.isEmpty())
         assertTrue(p.appOverrides.isEmpty())
