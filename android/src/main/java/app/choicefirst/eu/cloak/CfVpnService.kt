@@ -95,6 +95,7 @@ class CfVpnService : VpnService() {
         val eventId: String,
         val matchedDomain: String,
         val registrableDomain: String?,
+        val packageName: String?,
         val blocklistVersion: String?,
         val occurredAt: String,
     )
@@ -499,6 +500,7 @@ class CfVpnService : VpnService() {
             eventId: String,
             matched: String,
             matchResult: MatchResult?,
+            app: String?,
             blocklistVersion: String?,
             occurredAt: String,
         ): RemoteBlockedEvent? {
@@ -513,11 +515,18 @@ class CfVpnService : VpnService() {
                 ?.trim()
                 ?.lowercase(Locale.ROOT)
                 ?.ifEmpty { null }
+            val normalizedPackageName = app
+                ?.trim()
+                ?.lowercase(Locale.ROOT)
+                ?.takeIf { value ->
+                    value.isNotEmpty() && value != "unknown" && !value.startsWith("uid:")
+                }
 
             return RemoteBlockedEvent(
                 eventId = normalizedEventId,
                 matchedDomain = normalizedMatched,
                 registrableDomain = normalizedRegistrableDomain,
+                packageName = normalizedPackageName,
                 blocklistVersion = blocklistVersion?.trim()?.ifEmpty { null },
                 occurredAt = occurredAt,
             )
@@ -531,6 +540,9 @@ class CfVpnService : VpnService() {
                         put("matched_domain", event.matchedDomain)
                         if (event.registrableDomain != null) {
                             put("registrable_domain", event.registrableDomain)
+                        }
+                        if (event.packageName != null) {
+                            put("package_name", event.packageName)
                         }
                         if (event.blocklistVersion != null) {
                             put("blocklist_version", event.blocklistVersion)
@@ -850,6 +862,7 @@ class CfVpnService : VpnService() {
             UUID.randomUUID().toString(),
             remoteMatched,
             remoteMatchResult,
+            app,
             version.ifEmpty { null },
             nowIso(),
         ) ?: return

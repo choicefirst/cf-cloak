@@ -154,6 +154,7 @@ class CfVpnServiceTest {
                 lightAction = ModeAction.BLOCK,
                 extremeAction = ModeAction.BLOCK,
             ),
+            app = "Com.Perplexity.Android",
             blocklistVersion = "ruleset-2026-05-23",
             occurredAt = "2026-05-23T00:00:00Z",
         )
@@ -162,6 +163,7 @@ class CfVpnServiceTest {
         assertEquals("evt-123", remoteEvent?.eventId)
         assertEquals("tracker.example.com", remoteEvent?.matchedDomain)
         assertEquals("example.com", remoteEvent?.registrableDomain)
+        assertEquals("com.perplexity.android", remoteEvent?.packageName)
         assertEquals("ruleset-2026-05-23", remoteEvent?.blocklistVersion)
         assertEquals("2026-05-23T00:00:00Z", remoteEvent?.occurredAt)
     }
@@ -172,6 +174,7 @@ class CfVpnServiceTest {
             eventId = "   ",
             matched = "tracker.example.com",
             matchResult = null,
+            app = "com.perplexity.android",
             blocklistVersion = "ruleset-2026-05-23",
             occurredAt = "2026-05-23T00:00:00Z",
         )
@@ -185,6 +188,7 @@ class CfVpnServiceTest {
             eventId = "evt-123",
             matched = "   ",
             matchResult = null,
+            app = "com.perplexity.android",
             blocklistVersion = "ruleset-2026-05-23",
             occurredAt = "2026-05-23T00:00:00Z",
         )
@@ -200,6 +204,7 @@ class CfVpnServiceTest {
                     eventId = "evt-123",
                     matchedDomain = "tracker.example.com",
                     registrableDomain = "example.com",
+                    packageName = "com.perplexity.android",
                     blocklistVersion = "ruleset-2026-05-23",
                     occurredAt = "2026-05-23T00:00:00Z",
                 ),
@@ -207,6 +212,7 @@ class CfVpnServiceTest {
                     eventId = "evt-456",
                     matchedDomain = "pixel.example.net",
                     registrableDomain = null,
+                    packageName = null,
                     blocklistVersion = null,
                     occurredAt = "2026-05-23T00:01:00Z",
                 ),
@@ -216,6 +222,7 @@ class CfVpnServiceTest {
         assertTrue(body.contains("\"event_id\":\"evt-123\""))
         assertTrue(body.contains("\"matched_domain\":\"tracker.example.com\""))
         assertTrue(body.contains("\"registrable_domain\":\"example.com\""))
+        assertTrue(body.contains("\"package_name\":\"com.perplexity.android\""))
         assertTrue(body.contains("\"blocklist_version\":\"ruleset-2026-05-23\""))
         assertTrue(body.contains("\"matched_domain\":\"pixel.example.net\""))
         assertFalse(body.contains("\"domain\":\"pixel.example.net\""))
@@ -229,6 +236,7 @@ class CfVpnServiceTest {
                     eventId = "evt-123",
                     matchedDomain = "tracker.example.com",
                     registrableDomain = "example.com",
+                    packageName = "com.perplexity.android",
                     blocklistVersion = "ruleset-2026-05-23",
                     occurredAt = "2026-05-23T00:00:00Z",
                 ),
